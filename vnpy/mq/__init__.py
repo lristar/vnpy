@@ -156,9 +156,14 @@ class MqServer:
                 self.on_disconnected()
                 continue
 
-        # Close socket
+            # Receive request data from Reply socket
+            req = self.__socket_subscribe.recv_pyobj()
+            print("et msg")
+            print(req)
+
+        # Close And Unbind
         self.__socket_subscribe.close()
-        self.__socket_pubish.close()
+        self.__socket_pubish.unbind(self.__socket_pubish.LAST_ENDPOINT)
 
     def publish(self, topic: str, data: Any) -> None:
         """
@@ -177,7 +182,7 @@ class MqServer:
         """
         Subscribe data
         """
-        self.__socket_subscribe.setsockopt_string(zmq.SUBSCRIBE, topic)
+        self.__socket_subscribe.set_string()
 
     def on_disconnected(self):
         """
