@@ -1,4 +1,3 @@
-import os
 from os import truncate
 import signal
 import threading
@@ -7,11 +6,7 @@ from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Any, Callable, Dict
 from pathlib import Path
-
 import zmq
-import zmq.auth
-from zmq.backend.cython.constants import NOBLOCK
-from zmq.auth.thread import ThreadAuthenticator
 
 # Achieve Ctrl-c interrupt recv
 signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -46,9 +41,6 @@ class MqServer:
         """
         Constructor
         """
-        # Save functions dict: key is function name, value is function object
-        self.__functions: Dict[str, Any] = {}
-
         # Zmq port related
         self.__context: zmq.Context = zmq.Context()
 
@@ -57,6 +49,11 @@ class MqServer:
 
         # Publish socket (Publish pattern)
         self.__socket_pubish: zmq.Socket = self.__context.socket(zmq.PUB)
+        
+        self.__reconnect_num:0
+        
+        # monitor socket
+        self.__socket_monitor:None
 
         # Worker thread related
         self.__active: bool = False  # MqServer status
@@ -70,7 +67,7 @@ class MqServer:
     def start(
             self,
             subscribe_address: str,
-            publish_address: str,
+            publish_address: str
             # server_secretkey_path: str = "",
             # username: str = "",
             # password: str = ""
@@ -84,6 +81,9 @@ class MqServer:
         # Bind and Listen
         self.__socket_subscribe.connect(subscribe_address)
         self.__socket_pubish.bind(publish_address)
+        
+        # set monitor
+        self.set_monitor()
 
         # Start MqServer status
         self.__active = True
@@ -108,48 +108,8 @@ class MqServer:
             self.__thread.join()
         self.__thread = None
 
-    # def run(self) -> None:
-    #     """
-    #     Run MqServer functions
-    #     """
-    #     start = datetime.utcnow()
-    #
-    #     while self.__active:
-    #         # Use poll to wait event arrival, waiting time is 1 second (1000 milliseconds)
-    #         cur = datetime.utcnow()
-    #         delta = cur - start
-    #
-    #         if delta >= KEEP_ALIVE_INTERVAL:
-    #             self.publish(KEEP_ALIVE_TOPIC, cur)
-    #
-    #         if not self.__socket_subscribe.poll(1000):
-    #             continue
-    #
-    #         # Receive request data from Reply socket
-    #         req = self.__socket_rep.recv_pyobj()
-    #
-    #         # Get function name and parameters
-    #         name, args, kwargs = req
-    #
-    #         # Try to get and execute callable function object; capture exception information if it fails
-    #         try:
-    #             func = self.__functions[name]
-    #             r = func(*args, **kwargs)
-    #             rep = [True, r]
-    #         except Exception as e:  # noqa
-    #             rep = [False, traceback.format_exc()]
-    #
-    #         # send callable response by Reply socket
-    #         self.__socket_rep.send_pyobj(rep)
-    #
-    #     # Unbind socket address
-    #     self.__socket_pub.unbind(self.__socket_pub.LAST_ENDPOINT)
-    #     self.__socket_rep.unbind(self.__socket_rep.LAST_ENDPOINT)
-    #
-    #     if self.__authenticator:
-    #         self.__authenticator.stop()
-
     def run(self) -> None:
+        print("run")
         pull_tolerance = int(KEEP_ALIVE_TOLERANCE.total_seconds() * 1000)
         while self.__active:
             if not self.__socket_subscribe.poll(pull_tolerance):
@@ -157,9 +117,10 @@ class MqServer:
                 continue
 
             # Receive request data from Reply socket
-            req = self.__socket_subscribe.recv_pyobj()
-            print("et msg")
-            print(req)
+            topic, msg = self.__socket_subscribe.recv_multipart()
+            print("have resp")
+            # Process data by callable function
+            self.callback(topic, msg)
 
         # Close And Unbind
         self.__socket_subscribe.close()
@@ -171,6 +132,7 @@ class MqServer:
         """
         with self.__lock:
             self.__socket_pubish.send_pyobj([topic, data])
+            
 
     def callback(self, topic: str, data: Any) -> None:
         """
@@ -178,11 +140,24 @@ class MqServer:
         """
         raise NotImplementedError
 
-    def subscribe_topic(self, topic: str) -> None:
+    def subscribe_topic(self, topics=[]) -> None:
         """
         Subscribe data
         """
-        self.__socket_subscribe.set_string()
+        if len(topics) == 0:
+            print("Receiving messages on ALL topics...")
+            self.__socket_subscribe.setsockopt(zmq.SUBSCRIBE, b'')
+        else:
+            print("Receiving messages on topics: %s ..." % topics)
+            for t in topics:
+                self.__socket_subscribe.setsockopt(zmq.SUBSCRIBE, t.encode('utf-8'))
+                
+    def set_reconnect(self) -> None:
+        pass
+    
+    
+    def set_monitor(self):
+        self.__socket_monitor = self.__socket_subscribe.get_monitor_socket()
 
     def on_disconnected(self):
         """
@@ -190,4 +165,6 @@ class MqServer:
         """
         print("RpcServer has no response over {tolerance} seconds, please check you connection."
               .format(tolerance=KEEP_ALIVE_TOLERANCE.total_seconds()))
+        
+
 
