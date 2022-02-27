@@ -10,8 +10,10 @@ class TestMq(MqServer):
         super(TestMq, self).__init__()
     
     def callback(self, topic: str, data: Any) -> None:
-        print('topic is %s' % topic.decode('utf-8'))
-        print('data is %s' % data.decode('utf-8'))
+        tp = topic.decode('utf-8')
+        if tp !="ping":
+            print('topic is %s' % tp)
+            print('data is %s' % data.decode('utf-8'))
 
 
 if __name__ == '__main__':
